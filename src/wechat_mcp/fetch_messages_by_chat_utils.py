@@ -104,9 +104,26 @@ def scroll_up_small(center: tuple[float, float]) -> None:
     time.sleep(0.1)
 
 
+def background_color(image) -> tuple[int, int, int]:
+    """
+    The chat background: the most common colour in the image. Works in both
+    light mode (near-white) and dark mode (near-black).
+    """
+    rgb = image.convert("RGB")
+    colors = rgb.getcolors(maxcolors=rgb.width * rgb.height)
+    return max(colors, key=lambda item: item[0])[1]
+
+
 def count_colored_pixels(
-    image, left: float, top: float, right: float, bottom: float
+    image,
+    left: float,
+    top: float,
+    right: float,
+    bottom: float,
+    background: tuple[int, int, int],
+    tolerance: int = 3,
 ) -> tuple[int, int]:
+    """Count pixels in the box that differ from the background colour."""
     left_i = max(0, int(left))
     top_i = max(0, int(top))
     right_i = min(image.width, int(right))
@@ -123,11 +140,8 @@ def count_colored_pixels(
 
     for y in range(height):
         for x in range(width):
-            r, g, b = pixels[x, y]
-            brightness = (r + g + b) / 3.0
-            if brightness < 20:
-                continue
-            if brightness > 40 or (max(r, g, b) - min(r, g, b)) > 10:
+            pixel = pixels[x, y]
+            if max(abs(c - b) for c, b in zip(pixel, background)) > tolerance:
                 colored += 1
 
     return colored, total
@@ -137,7 +151,11 @@ SenderLabel = Literal["ME", "OTHER", "UNKNOWN"]
 
 
 def classify_sender_for_message(
-    image, list_origin, message_pos, message_size
+    image,
+    list_origin,
+    message_pos,
+    message_size,
+    background: tuple[int, int, int] | None = None,
 ) -> SenderLabel:
     """
     Heuristic classification of a message sender by sampling coloured pixels on
@@ -155,6 +173,9 @@ def classify_sender_for_message(
     top = center_y - band_height / 2.0
     bottom = top + band_height
 
+    if background is None:
+        background = background_color(image)
+
     margin = 5.0
     sample_width = min(100.0, msg_w / 3.0)
 
@@ -165,10 +186,10 @@ def classify_sender_for_message(
     right_left = right_right - sample_width
 
     left_colored, left_total = count_colored_pixels(
-        image, left_left, top, left_right, bottom
+        image, left_left, top, left_right, bottom, background
     )
     right_colored, right_total = count_colored_pixels(
-        image, right_left, top, right_right, bottom
+        image, right_left, top, right_right, bottom, background
     )
 
     avg_area = (left_total + right_total) / 2.0 if (left_total + right_total) else 0.0
@@ -221,6 +242,7 @@ def fetch_recent_messages(
 
     while True:
         image, list_origin, _ = capture_message_area(msg_list)
+        background = background_color(image)
 
         children = ax_get(msg_list, kAXChildrenAttribute) or []
         visible: list[ChatMessage] = []
@@ -237,7 +259,9 @@ def fetch_recent_messages(
             if point is None or size is None:
                 sender: SenderLabel = "UNKNOWN"
             else:
-                sender = classify_sender_for_message(image, list_origin, point, size)
+                sender = classify_sender_for_message(
+                    image, list_origin, point, size, background
+                )
 
             visible.append(ChatMessage(sender=sender, text=str(text)))
 

@@ -44,6 +44,25 @@ If an error occurs, the tools return an object containing an `"error"` field des
 
 Internally, `fetch_messages_by_chat` scrolls the WeChat message list using the system's standard macOS scroll semantics (no third‑party scroll reversal tools enabled) and continues scrolling until it has assembled the true last `last_n` messages or reached the beginning of the chat history, rather than stopping after a fixed number of scroll steps.
 
+### `global_search`
+
+**Signature**: `global_search(query: str, max_results: int = 50) -> dict`
+
+Types `query` into the global search box and returns the result rows grouped by section, keyed by WeChat's section titles ("Features", "Contacts", "Group Chats", "Chat History", "Official Accounts", "Internet search results", "More"). "Contacts" and "Group Chats" are expanded via "View All" and the results list is scrolled to the bottom; other sections return the rows WeChat shows in its compact view. No result is clicked. Use the names under "Contacts" / "Group Chats" as the `chat_name` for `fetch_messages_by_chat` or `reply_to_messages_by_chat`. Returns:
+
+```json
+{
+  "query": "John",
+  "sections": {
+    "Contacts": ["John Smith", "Johnny"],
+    "Group Chats": ["John's Birthday"],
+    "More": ["Search WeChat ID"]
+  }
+}
+```
+
+Each section keeps WeChat's ordering and holds at most `max_results` rows. Sections with no results are omitted.
+
 ### `add_contact_by_wechat_id`
 
 **Signature**:\
@@ -120,6 +139,9 @@ Holds the shared, low-level Accessibility helpers and WeChat UI navigation that 
 - `_summarize_search_candidates(entries)` - Extract up to 15 contact + group names
 - `_expand_section_if_needed(search_list, section_title)` - Click "View All"
 - `_select_contact_from_search_results(ax_app, contact_name)` - Smart search with scrolling that ignores non‑contact sections
+- `_iter_scrolled_search_entries(search_list)` - Yield snapshots of the search list while scrolling to the bottom
+- `_group_search_entries(entries)` - Group result rows by section title
+- `global_search(query, max_results)` - Collect every section's rows for a query without clicking any result
 - `_find_window_by_title(ax_app, title)` / `_wait_for_window(ax_app, title)` - Locate and wait for top‑level WeChat windows such as `"Add Contacts"`, `"Send Friend Request"`, or `"Moments"`
 - `click_element_center(element)` / `long_press_element_center(element, hold_seconds)` - Click or long‑press the visual center of an AX element
 

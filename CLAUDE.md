@@ -4,6 +4,7 @@
 
 - `fetch_messages_by_chat(chat_name, last_n)`
 - `reply_to_messages_by_chat(chat_name, reply_message, last_n)`
+- `global_search(query, max_results)`：微信全局搜索，按分区返回结果；"Contacts" / "Group Chats" 下的名称可用作 `chat_name`
 - `add_contact_by_wechat_id(wechat_id, friending_msg, remark, tags, privacy, hide_my_posts, hide_their_posts)`
 - `publish_moment_without_media(content, publish)`
 

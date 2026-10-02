@@ -13,7 +13,11 @@ from .add_contact_by_wechat_id_utils import (
 from .fetch_messages_by_chat_utils import ChatMessage, fetch_recent_messages
 from .publish_moment_utils import publish_moment_without_media as ax_publish_moment
 from .reply_to_messages_by_chat_utils import send_message
-from .wechat_accessibility import get_current_chat_name, open_chat_for_contact
+from .wechat_accessibility import (
+    get_current_chat_name,
+    open_chat_for_contact,
+    global_search as ax_global_search,
+)
 
 
 mcp = FastMCP("WeChat Helper MCP Server")
@@ -146,6 +150,45 @@ def reply_to_messages_by_chat(
         return {
             "error": str(exc),
             "chat_name": chat_name,
+        }
+
+
+@mcp.tool()
+def global_search(
+    query: str,
+    max_results: int = 50,
+) -> dict[str, Any]:
+    """
+    Run WeChat's global search and return the results without opening
+    anything.
+
+    This will:
+    - Type the query into the global search box
+    - Expand the "Contacts" and "Group Chats" sections and scroll
+      through the results
+    - Return the visible rows grouped by section ("Features", "Contacts",
+      "Group Chats", "Chat History", "Official Accounts",
+      "Internet search results", "More")
+
+    Use the names under "Contacts" / "Group Chats" as the chat_name
+    for fetch_messages_by_chat or reply_to_messages_by_chat.
+    """
+    logger.info(
+        "Tool global_search called for query=%s (max_results=%d)",
+        query,
+        max_results,
+    )
+    try:
+        sections = ax_global_search(query, max_results=max_results)
+        return {
+            "query": query,
+            "sections": sections,
+        }
+    except Exception as exc:
+        logger.exception("Error in global_search for query=%s: %s", query, exc)
+        return {
+            "error": str(exc),
+            "query": query,
         }
 
 

@@ -330,13 +330,18 @@ def focus_and_type_search(ax_app, text: str):
     send_key_with_modifiers(keycode_v, kCGEventFlagMaskCommand)
 
 
-def open_chat_for_contact(chat_name: str) -> dict[str, Any] | None:
+def open_chat_for_contact(
+    chat_name: str, search_query: str | None = None
+) -> dict[str, Any] | None:
     """
     Open a chat for a given name (contact or group).
 
     First, search in the left sidebar session list. If found, click it.
-    If not, type the name into the global search field and inspect the
-    search results:
+    If not, type ``search_query`` (default: the name itself) into the
+    global search field and inspect the search results for an exact
+    match on ``chat_name``. A separate query helps when a contact is
+    found by, say, the pinyin of their name but not by their display
+    name:
     - Prefer an exact match under the "Contacts" section.
     - Otherwise, prefer an exact match under the "Group Chats" section.
     - If no exact match is visible, expand "View All" for Contacts and
@@ -367,8 +372,9 @@ def open_chat_for_contact(chat_name: str) -> dict[str, Any] | None:
         time.sleep(0.3)
         return
 
-    logger.info("Chat not in session list, using global search")
-    focus_and_type_search(ax_app, chat_name)
+    query = search_query or chat_name
+    logger.info("Chat not in session list, using global search for %r", query)
+    focus_and_type_search(ax_app, query)
     time.sleep(0.4)
 
     try:

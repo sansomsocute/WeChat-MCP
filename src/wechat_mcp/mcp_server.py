@@ -27,6 +27,7 @@ mcp = FastMCP("WeChat Helper MCP Server")
 def fetch_messages_by_chat(
     chat_name: str,
     last_n: int = 50,
+    search_query: str | None = None,
 ) -> list[dict[str, Any]]:
     """
     Fetch recent messages for a specific chat (contact or group).
@@ -36,6 +37,10 @@ def fetch_messages_by_chat(
     - If found, click it to open the chat
     - If not found, search for the chat via the search box
     - Once the chat is open, retrieve recent messages from that chat
+
+    search_query: text to type into the search box instead of chat_name
+    (e.g. a pinyin name when searching the display name finds nothing).
+    The chat opened must still be named exactly chat_name.
     """
     try:
         logger.info("Tool fetch_messages_by_chat called for chat=%s", chat_name)
@@ -48,7 +53,7 @@ def fetch_messages_by_chat(
             same_chat,
         )
         if not same_chat:
-            open_result = open_chat_for_contact(chat_name)
+            open_result = open_chat_for_contact(chat_name, search_query)
             if isinstance(open_result, dict) and open_result.get("error"):
                 # No exact match; surface candidates instead of forcing a chat.
                 logger.info(
@@ -82,6 +87,7 @@ def fetch_messages_by_chat(
 def reply_to_messages_by_chat(
     chat_name: str,
     reply_message: str | None = None,
+    search_query: str | None = None,
 ) -> dict[str, Any]:
     """
     Optionally send a reply to a chat (contact or group).
@@ -93,6 +99,10 @@ def reply_to_messages_by_chat(
 
     If reply_message is None or empty, no message is sent; the tool still
     ensures the chat is open.
+
+    search_query: text to type into the search box instead of chat_name
+    (e.g. a pinyin name when searching the display name finds nothing).
+    The chat opened must still be named exactly chat_name.
     """
     logger.info(
         "Tool reply_to_messages_by_chat called for chat=%s (has_reply=%s)",
@@ -109,7 +119,7 @@ def reply_to_messages_by_chat(
             same_chat,
         )
         if not same_chat:
-            open_result = open_chat_for_contact(chat_name)
+            open_result = open_chat_for_contact(chat_name, search_query)
             if isinstance(open_result, dict) and open_result.get("error"):
                 logger.info(
                     "open_chat_for_contact returned candidates for chat=%s; "

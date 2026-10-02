@@ -112,6 +112,8 @@ wechat-mcp --transport sse
 
 - **`fetch_messages_by_chat`** - Get recent messages from a chat
 - **`reply_to_messages_by_chat`** - Send a reply to a chat
+
+  Both take an optional `search_query`: the text typed into WeChat's search when the chat isn't in the session list. The opened chat must still match `chat_name` exactly, so `chat_name="魏璐佩", search_query="Lupei"` finds a contact by pinyin.
 - **`global_search`** - Run WeChat's global search and return results grouped by section (Contacts, Group Chats, Chat History, …) without opening anything
 - **`add_contact_by_wechat_id`** - Add a new contact using a WeChat ID and send a friend request
 - **`publish_moment_without_media`** - Publish a text-only Moments post (no photos or videos); optionally only prepare a draft without posting via `publish=False`

@@ -89,7 +89,33 @@ def get_wechat_ax_app() -> Any:
     logger.info(
         "Activated WeChat (bundle_id=%s, pid=%s)", bundle_id, app.processIdentifier()
     )
-    return AXUIElementCreateApplication(app.processIdentifier())
+    ax_app = AXUIElementCreateApplication(app.processIdentifier())
+    _wait_for_ax_tree(ax_app)
+    return ax_app
+
+
+def _wait_for_ax_tree(ax_app: Any, timeout: float = 3.0) -> None:
+    """
+    Wait until WeChat exposes its main-window elements via AX.
+
+    WeChat builds its accessibility tree lazily: the first query from a
+    new process sees a partial tree (no search field or session list),
+    and the full tree appears a few hundred milliseconds later.
+    """
+
+    def is_ready(el, role, title, identifier):
+        return (role == kAXTextAreaRole and title == "Search") or (
+            role == kAXListRole and identifier == "session_list"
+        )
+
+    end = time.time() + timeout
+    while True:
+        if dfs(ax_app, is_ready) is not None:
+            return
+        if time.time() >= end:
+            logger.warning("WeChat AX tree not ready after %.1fs", timeout)
+            return
+        time.sleep(0.1)
 
 
 def _find_window_by_title(ax_app: Any, title: str):
@@ -444,12 +470,13 @@ def _collect_search_entries(search_list) -> list[SearchEntry]:
 
 def _build_section_headers(entries: list[SearchEntry]) -> dict[str, float]:
     """
-    Map known section titles ("Contacts", "Group Chats", "Chat History", "Official Accounts", "Internet search results", "More")
+    Map known section titles ("Features", "Contacts", "Group Chats", "Chat History", "Official Accounts", "Internet search results", "More")
     to their vertical Y coordinate within the search list.
     """
     headers: dict[str, float] = {}
     for entry in entries:
         if entry.text in (
+            "Features",
             "Contacts",
             "Group Chats",
             "Chat History",
@@ -507,6 +534,35 @@ def _find_exact_match_in_entries(entries: list[SearchEntry], contact_name: str):
     return None
 
 
+def _group_search_entries(entries: list[SearchEntry]) -> dict[str, list[str]]:
+    """
+    Group the text of search result rows by the section they appear in,
+    keyed by section title ("Contacts", "Group Chats", "Chat History",
+    etc.). Section headers, "View All(...)"/"Collapse" rows and rows
+    above the first header are skipped; duplicates within a section
+    are dropped while preserving order.
+    """
+    headers = _build_section_headers(entries)
+    groups: dict[str, list[str]] = {}
+
+    for entry in entries:
+        # Skip section headers themselves.
+        if entry.text in headers:
+            continue
+        # Skip the "View All(...)" / "Collapse" rows that toggle a section.
+        if entry.text.startswith("View All") or entry.text == "Collapse":
+            continue
+
+        section = _classify_section(entry, headers)
+        if section is None:
+            continue
+        texts = groups.setdefault(section, [])
+        if entry.text not in texts:
+            texts.append(entry.text)
+
+    return groups
+
+
 def _summarize_search_candidates(
     entries: list[SearchEntry],
 ) -> dict[str, list[str]]:
@@ -519,33 +575,10 @@ def _summarize_search_candidates(
 
     Entries belonging to "Chat History", "Official Accounts", "Internet search results", or "More" are ignored.
     """
-    headers = _build_section_headers(entries)
-    contacts: list[str] = []
-    group_chats: list[str] = []
-
-    for entry in entries:
-        # Skip section headers themselves.
-        if entry.text in (
-            "Contacts",
-            "Group Chats",
-            "Chat History",
-            "Official Accounts",
-            "Internet search results",
-            "More",
-        ):
-            continue
-
-        section = _classify_section(entry, headers)
-        if section == "Contacts":
-            if entry.text not in contacts:
-                contacts.append(entry.text)
-        elif section == "Group Chats":
-            if entry.text not in group_chats:
-                group_chats.append(entry.text)
-
+    groups = _group_search_entries(entries)
     return {
-        "contacts": contacts[:15],
-        "group_chats": group_chats[:15],
+        "contacts": groups.get("Contacts", [])[:15],
+        "group_chats": groups.get("Group Chats", [])[:15],
     }
 
 
@@ -604,15 +637,10 @@ def _select_contact_from_search_results(
     _expand_section_if_needed(search_list, "Contacts")
     _expand_section_if_needed(search_list, "Group Chats")
 
-    center = get_list_center(search_list)
-    last_bottom_text = None
-    stable = 0
-
     # Scroll through the expanded search list, looking for an
     # exact match under Contacts/Group Chats, while aggregating
     # candidate names from Contacts and Group Chats.
-    for _ in range(80):
-        entries = _collect_search_entries(search_list)
+    for entries in _iter_scrolled_search_entries(search_list):
         update_candidates(entries)
 
         element = _find_exact_match_in_entries(entries, contact_name)
@@ -626,6 +654,25 @@ def _select_contact_from_search_results(
                 "contacts": list(aggregated_contacts)[:15],
                 "group_chats": list(aggregated_groups)[:15],
             }
+
+    return False, {
+        "contacts": list(aggregated_contacts)[:15],
+        "group_chats": list(aggregated_groups)[:15],
+    }
+
+
+def _iter_scrolled_search_entries(search_list, max_scrolls: int = 80):
+    """
+    Yield snapshots of the search results list, scrolling downwards
+    between snapshots until the bottom of the list stops changing.
+    Callers may stop iterating early (e.g. once a match is found).
+    """
+    center = get_list_center(search_list)
+    last_bottom_text = None
+    stable = 0
+
+    for _ in range(max_scrolls):
+        yield _collect_search_entries(search_list)
 
         children = ax_get(search_list, kAXChildrenAttribute) or []
         texts: list[str] = []
@@ -650,10 +697,81 @@ def _select_contact_from_search_results(
         post_scroll(center, -80)
         time.sleep(0.1)
 
-    return False, {
-        "contacts": list(aggregated_contacts)[:15],
-        "group_chats": list(aggregated_groups)[:15],
-    }
+
+def _wait_for_search_results(ax_app: Any, timeout: float = 4.0):
+    """
+    Return the search results list once WeChat has finished filling it.
+
+    Results arrive incrementally after typing, so wait until the list's
+    rows are non-empty and unchanged across a few consecutive polls.
+    """
+    end = time.time() + timeout
+    last_texts: list[str] | None = None
+    stable = 0
+    while True:
+        try:
+            search_list = get_search_list(ax_app)
+        except RuntimeError:
+            search_list = None
+
+        if search_list is not None:
+            texts = [e.text for e in _collect_search_entries(search_list)]
+            if texts and texts == last_texts:
+                stable += 1
+                if stable >= 3:
+                    return search_list
+            else:
+                last_texts = texts
+                stable = 0
+
+        if time.time() >= end:
+            logger.warning("Search results not stable after %.1fs", timeout)
+            return get_search_list(ax_app)
+        time.sleep(0.2)
+
+
+def global_search(query: str, max_results: int = 50) -> dict[str, list[str]]:
+    """
+    Type `query` into WeChat's global search box and return the visible
+    result rows grouped by section ("Contacts", "Group Chats",
+    "Chat History", "Official Accounts", "Internet search results",
+    "More"), without clicking any result.
+
+    The "Contacts" and "Group Chats" sections are expanded via
+    "View All" when present, and the results list is scrolled so rows
+    beyond the first screen are included. Each section keeps WeChat's
+    ordering and is capped at `max_results` rows.
+    """
+    logger.info("Running global search for query: %s", query)
+    ax_app = get_wechat_ax_app()
+    focus_and_type_search(ax_app, query)
+    time.sleep(0.4)
+
+    search_list = _wait_for_search_results(ax_app)
+    results: dict[str, list[str]] = {}
+
+    def update(entries: list[SearchEntry]) -> None:
+        for section, texts in _group_search_entries(entries).items():
+            merged = results.setdefault(section, [])
+            for text in texts:
+                if text not in merged:
+                    merged.append(text)
+
+    # Record the compact results first, since expanding a section can
+    # push other sections out of view.
+    update(_collect_search_entries(search_list))
+    _expand_section_if_needed(search_list, "Contacts")
+    _expand_section_if_needed(search_list, "Group Chats")
+
+    for entries in _iter_scrolled_search_entries(search_list):
+        update(entries)
+
+    logger.info(
+        "Global search for %s found sections: %s",
+        query,
+        {section: len(texts) for section, texts in results.items()},
+    )
+    return {section: texts[:max_results] for section, texts in results.items()}
 
 
 def axvalue_to_point(ax_value):
